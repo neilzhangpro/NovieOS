@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake Game</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #1a1a2e;
+    color: #eee;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.05em;
+    color: #e94560;
+  }
+
+  #score-bar {
+    display: flex;
+    gap: 2rem;
+    font-size: 1rem;
+    margin-bottom: 0.6rem;
+    color: #aaa;
+  }
+  #score-bar span { color: #fff; font-weight: 600; }
+
+  canvas {
+    border: 2px solid #e94560;
+    border-radius: 4px;
+    display: block;
+    background: #16213e;
+    image-rendering: pixelated;
+  }
+
+  #overlay {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  #overlay.active { pointer-events: auto; }
+  #overlay .msg {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  }
+  #overlay .sub {
+    font-size: 0.95rem;
+    color: #aaa;
+  }
+
+  #controls-hint {
+    margin-top: 0.8rem;
+    font-size: 0.85rem;
+    color: #555;
+  }
+
+  .touch-controls {
+    display: none;
+    margin-top: 1rem;
+    gap: 4px;
+  }
+  .touch-controls button {
+    width: 56px;
+    height: 56px;
+    font-size: 1.5rem;
+    border: none;
+    border-radius: 8px;
+    background: #0f3460;
+    color: #eee;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .touch-controls button:active { background: #e94560; }
+
+  @media (hover: none) and (pointer: coarse) {
+    .touch-controls { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 56px); justify-items: center; align-items: center; }
+    .touch-controls .up   { grid-column: 2; grid-row: 1; }
+    .touch-controls .left { grid-column: 1; grid-row: 2; }
+    .touch-controls .down { grid-column: 2; grid-row: 2; }
+    .touch-controls .right{ grid-column: 3; grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Snake</h1>
+<div id="score-bar">
+  Score: <span id="score">0</span>
+  &nbsp;|&nbsp;
+  Best: <span id="best">0</span>
+</div>
+
+<div style="position:relative; display:inline-block;">
+  <canvas id="game" width="400" height="400"></canvas>
+  <div id="overlay" class="active">
+    <div class="msg" id="overlay-msg">Press any key to start</div>
+    <div class="sub" id="overlay-sub">Arrow keys or WASD to move</div>
+  </div>
+</div>
+
+<div class="touch-controls" id="touch-controls">
+  <button class="up" aria-label="Up">&#9650;</button>
+  <button class="left" aria-label="Left">&#9664;</button>
+  <button class="down" aria-label="Down">&#9660;</button>
+  <button class="right" aria-label="Right">&#9654;</button>
+</div>
+
+<div id="controls-hint">Arrow keys / WASD to move &middot; P to pause</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var COLS = 20, ROWS = 20;
+  var canvas = document.getElementById("game");
+  var ctx = canvas.getContext("2d");
+  var CELL = canvas.width / COLS;
+
+  var overlay = document.getElementById("overlay");
+  var overlayMsg = document.getElementById("overlay-msg");
+  var overlaySub = document.getElementById("overlay-sub");
+  var scoreEl = document.getElementById("score");
+  var bestEl = document.getElementById("best");
+
+  var DIR = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
+  var DX = [0, 1, 0, -1];
+  var DY = [-1, 0, 1, 0];
+
+  var snake, dir, nextDir, food, score, best, state, speed, timer;
+
+  best = parseInt(localStorage.getItem("snake-best") || "0", 10);
+  bestEl.textContent = best;
+
+  function init() {
+    var mid = Math.floor(COLS / 2);
+    snake = [
+      { x: mid, y: Math.floor(ROWS / 2) },
+      { x: mid - 1, y: Math.floor(ROWS / 2) },
+      { x: mid - 2, y: Math.floor(ROWS / 2) }
+    ];
+    dir = DIR.RIGHT;
+    nextDir = DIR.RIGHT;
+    score = 0;
+    speed = 150;
+    scoreEl.textContent = "0";
+    placeFood();
+  }
+
+  function placeFood() {
+    var free = [];
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var occupied = false;
+        for (var i = 0; i < snake.length; i++) {
+          if (snake[i].x === c && snake[i].y === r) { occupied = true; break; }
+        }
+        if (!occupied) free.push({ x: c, y: r });
+      }
+    }
+    if (free.length === 0) { win(); return; }
+    food = free[Math.floor(Math.random() * free.length)];
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Grid lines
+    ctx.strokeStyle = "rgba(255,255,255,0.03)";
+    ctx.lineWidth = 1;
+    for (var i = 1; i < COLS; i++) {
+      ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, canvas.height); ctx.stroke();
+    }
+    for (var j = 1; j < ROWS; j++) {
+      ctx.beginPath(); ctx.moveTo(0, j * CELL); ctx.lineTo(canvas.width, j * CELL); ctx.stroke();
+    }
+
+    // Food
+    ctx.fillStyle = "#e94560";
+    ctx.beginPath();
+    ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Snake
+    for (var k = 0; k < snake.length; k++) {
+      var seg = snake[k];
+      var t = k / snake.length;
+      var g = Math.round(200 - t * 120);
+      ctx.fillStyle = k === 0 ? "#53d769" : "rgb(0," + g + ",80)";
+      ctx.fillRect(seg.x * CELL + 1, seg.y * CELL + 1, CELL - 2, CELL - 2);
+      if (k === 0) {
+        ctx.fillStyle = "#1a1a2e";
+        var ex1, ey1, ex2, ey2, es = 3;
+        if (dir === DIR.RIGHT || dir === DIR.LEFT) {
+          ex1 = seg.x * CELL + CELL / 2 + (dir === DIR.RIGHT ? 4 : -4);
+          ey1 = seg.y * CELL + CELL / 4;
+          ex2 = ex1;
+          ey2 = seg.y * CELL + 3 * CELL / 4;
+        } else {
+          ex1 = seg.x * CELL + CELL / 4;
+          ey1 = seg.y * CELL + CELL / 2 + (dir === DIR.DOWN ? 4 : -4);
+          ex2 = seg.x * CELL + 3 * CELL / 4;
+          ey2 = ey1;
+        }
+        ctx.fillRect(ex1 - es / 2, ey1 - es / 2, es, es);
+        ctx.fillRect(ex2 - es / 2, ey2 - es / 2, es, es);
+      }
+    }
+  }
+
+  function step() {
+    dir = nextDir;
+    var head = snake[0];
+    var nx = head.x + DX[dir];
+    var ny = head.y + DY[dir];
+
+    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) { gameOver(); return; }
+    for (var i = 0; i < snake.length; i++) {
+      if (snake[i].x === nx && snake[i].y === ny) { gameOver(); return; }
+    }
+
+    snake.unshift({ x: nx, y: ny });
+
+    if (nx === food.x && ny === food.y) {
+      score++;
+      scoreEl.textContent = score;
+      if (score > best) {
+        best = score;
+        bestEl.textContent = best;
+        try { localStorage.setItem("snake-best", String(best)); } catch (e) {}
+      }
+      if (speed > 60) speed = Math.max(60, speed - 3);
+      placeFood();
+    } else {
+      snake.pop();
+    }
+
+    draw();
+    timer = setTimeout(step, speed);
+  }
+
+  function start() {
+    if (state === "playing") return;
+    init();
+    state = "playing";
+    overlay.classList.remove("active");
+    draw();
+    timer = setTimeout(step, speed);
+  }
+
+  function pause() {
+    if (state !== "playing") return;
+    state = "paused";
+    clearTimeout(timer);
+    overlayMsg.textContent = "Paused";
+    overlaySub.textContent = "Press P or any key to resume";
+    overlay.classList.add("active");
+  }
+
+  function resume() {
+    if (state !== "paused") return;
+    state = "playing";
+    overlay.classList.remove("active");
+    timer = setTimeout(step, speed);
+  }
+
+  function gameOver() {
+    state = "dead";
+    clearTimeout(timer);
+    overlayMsg.textContent = "Game Over";
+    overlaySub.textContent = "Score: " + score + "  ·  Press any key to restart";
+    overlay.classList.add("active");
+  }
+
+  function win() {
+    state = "dead";
+    clearTimeout(timer);
+    overlayMsg.textContent = "You Win!";
+    overlaySub.textContent = "Score: " + score + "  ·  Press any key to restart";
+    overlay.classList.add("active");
+  }
+
+  function handleDirection(d) {
+    if (state === "dead" || state === null) { start(); return; }
+    if (state === "paused") { resume(); return; }
+    if ((d + 2) % 4 === dir) return;
+    nextDir = d;
+  }
+
+  document.addEventListener("keydown", function (e) {
+    switch (e.key) {
+      case "ArrowUp":    case "w": case "W": e.preventDefault(); handleDirection(DIR.UP); break;
+      case "ArrowRight": case "d": case "D": e.preventDefault(); handleDirection(DIR.RIGHT); break;
+      case "ArrowDown":  case "s": case "S": e.preventDefault(); handleDirection(DIR.DOWN); break;
+      case "ArrowLeft":  case "a": case "A": e.preventDefault(); handleDirection(DIR.LEFT); break;
+      case "p": case "P":
+        e.preventDefault();
+        if (state === "playing") pause();
+        else if (state === "paused") resume();
+        break;
+      default:
+        if (state === "dead" || state === null) start();
+        else if (state === "paused") resume();
+    }
+  });
+
+  // Touch controls
+  var tc = document.getElementById("touch-controls");
+  tc.querySelector(".up").addEventListener("click",    function () { handleDirection(DIR.UP); });
+  tc.querySelector(".right").addEventListener("click", function () { handleDirection(DIR.RIGHT); });
+  tc.querySelector(".down").addEventListener("click",  function () { handleDirection(DIR.DOWN); });
+  tc.querySelector(".left").addEventListener("click",  function () { handleDirection(DIR.LEFT); });
+
+  // Swipe support
+  var touchStartX = 0, touchStartY = 0;
+  canvas.addEventListener("touchstart", function (e) {
+    var t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+  }, { passive: true });
+  canvas.addEventListener("touchend", function (e) {
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = t.clientY - touchStartY;
+    if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+      if (state === "dead" || state === null) start();
+      return;
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      handleDirection(dx > 0 ? DIR.RIGHT : DIR.LEFT);
+    } else {
+      handleDirection(dy > 0 ? DIR.DOWN : DIR.UP);
+    }
+  }, { passive: true });
+
+  // Initial draw
+  init();
+  state = null;
+  draw();
+})();
+</script>
+</body>
+</html>
