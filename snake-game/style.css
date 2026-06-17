@@ -13,11 +13,32 @@ body {
 
 body {
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   background: #111;
+  font-family: monospace;
+  color: #fff;
 }
 
 canvas {
   display: block;
+  border: 2px solid #333;
+  border-radius: 4px;
+}
+
+#restart-btn {
+  margin-top: 12px;
+  padding: 8px 20px;
+  font-family: monospace;
+  font-size: 14px;
+  color: #fff;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#restart-btn:hover {
+  background: #444;
 }
